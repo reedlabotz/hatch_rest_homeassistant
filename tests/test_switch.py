@@ -244,7 +244,7 @@ class TestHatchBabyRestProgramSwitch:
         """Test the name says what the program is for, when the device says."""
         assert (
             HatchBabyRestProgramSwitch(coordinator, 1).name
-            == "Hatch Rest Program 1 (Weekday Sleep)"
+            == "Hatch Rest Program 1 (Weekday Sleep, 07:30)"
         )
 
     def test_an_unnamed_slot_is_named_by_number(
@@ -295,8 +295,10 @@ class TestHatchBabyRestProgramSwitch:
 
         assert attributes == {
             "name": "Weekday Sleep",
+            "summary": "07:30 (Mon, Tue, Wed, Thu, Fri) - Weekday Sleep",
             "time": "07:30",
             "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+            "duration": "1h",
             "duration_seconds": 3600,
             "raw": PROGRAM_BLOCK.hex(),
             "color": (253, 209, 45),

@@ -1,7 +1,7 @@
 """Hatch Rest media player."""
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.media_player import (
@@ -252,4 +252,3 @@ class HatchBabyRestMediaPlayer(HatchBabyRestEntity, RestoreEntity, MediaPlayerEn
             PyHatchBabyRestSound(previous_sound).name,
         )
         await self._hatch_rest_device.set_sound(previous_sound)
-

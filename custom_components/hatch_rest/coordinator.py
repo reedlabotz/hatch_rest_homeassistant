@@ -1,7 +1,7 @@
 """Hatch Rest coordinator."""
 
-from datetime import datetime, timedelta
 import logging
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.bluetooth import (
@@ -24,7 +24,6 @@ from .const import (
     ADVERTISEMENT_STALE_SECONDS,
     DOMAIN,
     MANUFACTURER_ID,
-    PyHatchBabyRestSound,
 )
 
 _LOGGER = logging.getLogger(__name__)

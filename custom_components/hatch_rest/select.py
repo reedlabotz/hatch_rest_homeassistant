@@ -482,4 +482,3 @@ class HatchBabyRestSoundSelect(HatchBabyRestEntity, SelectEntity):  # pyright: i
         if volume is not None:
             _LOGGER.debug("select setting volume to %d", volume)
             await self._hatch_rest_device.set_volume(volume)
-

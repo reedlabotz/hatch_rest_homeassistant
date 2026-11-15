@@ -10,8 +10,11 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import EntityCategory
 from homeassistant.util import dt as dt_util
 
+from custom_components.hatch_rest.const import PyHatchBabyRestSound
 from custom_components.hatch_rest.coordinator import HatchBabyRestUpdateCoordinator
 from custom_components.hatch_rest.sensor import (
+    HatchBabyRestProgramSensor,
+    HatchBabyRestProgramsOverviewSensor,
     HatchBabyRestTimerSensor,
     async_setup_entry,
 )
@@ -21,10 +24,10 @@ class TestSensorSetup:
     """Tests for the sensor platform's setup."""
 
     @pytest.mark.asyncio
-    async def test_setup_adds_only_the_timer(
+    async def test_setup_adds_timer_and_program_sensors(
         self, hass, mock_coordinator: HatchBabyRestUpdateCoordinator
     ):
-        """Test programs no longer come up as sensors."""
+        """Test setup adds the timer, overview, and 10 program sensors."""
         config_entry = MagicMock()
         config_entry.runtime_data = mock_coordinator
         added = []
@@ -33,8 +36,10 @@ class TestSensorSetup:
             hass, config_entry, lambda entities, **_: added.extend(entities)
         )
 
-        assert len(added) == 1
+        assert len(added) == 12
         assert isinstance(added[0], HatchBabyRestTimerSensor)
+        assert isinstance(added[1], HatchBabyRestProgramsOverviewSensor)
+        assert all(isinstance(e, HatchBabyRestProgramSensor) for e in added[2:])
 
 
 class TestHatchBabyRestTimerSensor:
@@ -137,7 +142,11 @@ class TestSensorEntityCategories:
 
     @pytest.mark.parametrize(
         "build",
-        [HatchBabyRestTimerSensor],
+        [
+            HatchBabyRestTimerSensor,
+            HatchBabyRestProgramsOverviewSensor,
+            lambda c: HatchBabyRestProgramSensor(c, 1),
+        ],
     )
     def test_no_sensor_claims_to_be_configuration(
         self, mock_coordinator: HatchBabyRestUpdateCoordinator, build
@@ -150,3 +159,151 @@ class TestSensorEntityCategories:
         nothing about it; this asserts the rule directly instead.
         """
         assert build(mock_coordinator).entity_category is not EntityCategory.CONFIG
+
+
+class TestHatchBabyRestProgramsOverviewSensor:
+    """Tests for HatchBabyRestProgramsOverviewSensor."""
+
+    def test_empty_programs(self, mock_coordinator: HatchBabyRestUpdateCoordinator):
+        """Test overview reports No Programs when none are configured."""
+        mock_coordinator.hatch_rest_device.programs = {}
+        sensor = HatchBabyRestProgramsOverviewSensor(mock_coordinator)
+
+        assert sensor.name == "Hatch Rest Programs"
+        assert sensor.native_value == "No Programs"
+        assert sensor.extra_state_attributes == {
+            "configured_count": 0,
+            "programs": [],
+            "summary": "No configured programs",
+        }
+
+    def test_active_and_disabled_programs(
+        self, mock_coordinator: HatchBabyRestUpdateCoordinator
+    ):
+        """Test overview counts and summarizes configured programs."""
+        mock_coordinator.hatch_rest_device.programs = {
+            1: {
+                "empty": False,
+                "enabled": True,
+                "time": "07:00",
+                "days": ["Mon", "Tue"],
+                "duration_seconds": 3600,
+                "sound": PyHatchBabyRestSound.rain,
+                "sound_id": 7,
+                "volume": 50,
+                "color": (255, 255, 255),
+                "brightness": 100,
+                "toddler_lock": False,
+                "name": "Wake Up",
+            },
+            2: {
+                "empty": False,
+                "enabled": False,
+                "time": "19:30",
+                "days": [],
+                "duration_seconds": 1800,
+                "sound": None,
+                "sound_id": 8,
+                "volume": 30,
+                "color": (0, 0, 0),
+                "brightness": 0,
+                "toddler_lock": True,
+                "name": None,
+            },
+            3: {"empty": True},
+        }
+        sensor = HatchBabyRestProgramsOverviewSensor(mock_coordinator)
+
+        assert sensor.native_value == "2 Configured (1 Active)"
+        attrs = sensor.extra_state_attributes
+        assert attrs["configured_count"] == 2
+        assert len(attrs["programs"]) == 2
+        assert attrs["programs"][0]["slot"] == 1
+        assert attrs["programs"][0]["sound"] == "rain"
+        assert attrs["programs"][1]["slot"] == 2
+        assert attrs["programs"][1]["sound"] == 8
+        assert "Slot 1 (Wake Up): 07:00 [Mon, Tue] (1h)" in attrs["summary"]
+        assert "Slot 2 (Program 2): 19:30 [] (30m)" in attrs["summary"]
+
+
+class TestHatchBabyRestProgramSensor:
+    """Tests for HatchBabyRestProgramSensor."""
+
+    def test_empty_slot(self, mock_coordinator: HatchBabyRestUpdateCoordinator):
+        """Test an empty or unread slot reports Empty."""
+        mock_coordinator.hatch_rest_device.programs = {}
+        sensor = HatchBabyRestProgramSensor(mock_coordinator, 4)
+
+        assert sensor.name == "Hatch Rest Program 4"
+        assert sensor.icon == "mdi:clock-remove-outline"
+        assert sensor.native_value == "Empty"
+        assert sensor.extra_state_attributes == {"slot": 4, "empty": True}
+
+    def test_active_program_slot(
+        self, mock_coordinator: HatchBabyRestUpdateCoordinator
+    ):
+        """Test an active program slot exposes name, icon, summary, and attributes."""
+        mock_coordinator.hatch_rest_device.programs = {
+            1: {
+                "empty": False,
+                "enabled": True,
+                "time": "07:30",
+                "days": ["Mon", "Wed", "Fri"],
+                "duration_seconds": 3600,
+                "sound": PyHatchBabyRestSound.ocean,
+                "sound_id": 5,
+                "volume": 60,
+                "color": (10, 20, 30),
+                "brightness": 128,
+                "toddler_lock": True,
+                "name": "Morning",
+            }
+        }
+        sensor = HatchBabyRestProgramSensor(mock_coordinator, 1)
+
+        assert sensor.name == "Hatch Rest Program 1 (Morning)"
+        assert sensor.icon == "mdi:clock-check-outline"
+        assert sensor.native_value == "07:30 (Mon, Wed, Fri) - Morning [Active]"
+        assert sensor.extra_state_attributes == {
+            "slot": 1,
+            "name": "Morning",
+            "empty": False,
+            "enabled": True,
+            "time": "07:30",
+            "days": ["Mon", "Wed", "Fri"],
+            "duration": "1h",
+            "duration_seconds": 3600,
+            "sound": "ocean",
+            "volume": 60,
+            "color": (10, 20, 30),
+            "brightness": 128,
+            "toddler_lock": True,
+        }
+
+    def test_disabled_unnamed_program_slot(
+        self, mock_coordinator: HatchBabyRestUpdateCoordinator
+    ):
+        """Test a disabled unnamed program slot."""
+        mock_coordinator.hatch_rest_device.programs = {
+            2: {
+                "empty": False,
+                "enabled": False,
+                "time": "20:00",
+                "days": [],
+                "duration_seconds": 900,
+                "sound": None,
+                "sound_id": 8,
+                "volume": 25,
+                "color": (0, 0, 0),
+                "brightness": 0,
+                "toddler_lock": False,
+                "name": None,
+            }
+        }
+        sensor = HatchBabyRestProgramSensor(mock_coordinator, 2)
+
+        assert sensor.name == "Hatch Rest Program 2"
+        assert sensor.icon == "mdi:clock-outline"
+        assert sensor.native_value == "20:00 (No days) [Disabled]"
+        assert sensor.extra_state_attributes["duration"] == "15m"
+        assert sensor.extra_state_attributes["sound"] == 8

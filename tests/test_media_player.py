@@ -429,3 +429,39 @@ class TestHatchBabyRestMediaPlayer:
         media_player_entity._hatch_rest_device.set_sound.assert_called_once_with(
             PyHatchBabyRestSound.bird
         )
+
+    @pytest.mark.asyncio
+    async def test_play_media_supports_friendly_and_numeric_sources(
+        self, media_player_entity: HatchBabyRestMediaPlayer
+    ):
+        """Test async_play_media delegates to async_select_source and powers on."""
+        device = media_player_entity._hatch_rest_device
+        device.power = False
+        device.brightness = 100
+        device.volume = 0
+        device.set_brightness = AsyncMock()
+        device.turn_power_on = AsyncMock()
+        device.set_volume = AsyncMock()
+        device.set_sound = AsyncMock()
+
+        assert (
+            media_player_entity.supported_features & MediaPlayerEntityFeature.PLAY_MEDIA
+        )
+
+        await media_player_entity.async_play_media("music", "White Noise")
+
+        device.set_brightness.assert_awaited_once_with(0)
+        device.turn_power_on.assert_awaited_once()
+        device.set_volume.assert_awaited_once_with(100)
+        device.set_sound.assert_awaited_once_with(PyHatchBabyRestSound.noise)
+
+        device.set_sound.reset_mock()
+        await media_player_entity.async_play_media("music", "7")
+        device.set_sound.assert_awaited_once_with(PyHatchBabyRestSound.rain)
+
+        device.set_sound.reset_mock()
+        device.turn_power_on.reset_mock()
+        device.power = False
+        await media_player_entity.async_select_source("none")
+        device.turn_power_on.assert_not_awaited()
+        device.set_sound.assert_awaited_once_with(PyHatchBabyRestSound.none)

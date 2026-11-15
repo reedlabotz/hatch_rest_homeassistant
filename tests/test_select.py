@@ -8,7 +8,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import voluptuous as vol
 
+from custom_components.hatch_rest.api import PyHatchBabyRestAsync
 from custom_components.hatch_rest.const import (
+    CHAR_FEEDBACK,
+    CHAR_TX,
     TIMER_CUSTOM,
     TIMER_OFF,
     TIMER_PRESETS,
@@ -17,8 +20,11 @@ from custom_components.hatch_rest.const import (
 from custom_components.hatch_rest.coordinator import HatchBabyRestUpdateCoordinator
 from custom_components.hatch_rest.select import (
     OPTION_NONE,
+    SERVICE_SET_SOUND,
     SET_SLEEP_TIMER_SCHEMA,
+    SOUND_OPTIONS,
     HatchBabyRestFavoriteSelect,
+    HatchBabyRestSoundSelect,
     HatchBabyRestTimerSelect,
 )
 
@@ -273,19 +279,20 @@ class TestServiceRegistration:
             SERVICE_SET_FAVORITE,
             SERVICE_SAVE_FAVORITE,
             SERVICE_SET_SLEEP_TIMER,
+            SERVICE_SET_SOUND,
         }
 
+        entity_map = {
+            SERVICE_SET_SLEEP_TIMER: HatchBabyRestTimerSelect,
+            SERVICE_SET_SOUND: HatchBabyRestSoundSelect,
+        }
         for name, (_, schema, func) in registered.items():
             # The method each service dispatches to has to exist on the
             # entity it is meant for.
-            entity = (
-                HatchBabyRestTimerSelect
-                if name == SERVICE_SET_SLEEP_TIMER
-                else HatchBabyRestFavoriteSelect
-            )
+            entity = entity_map.get(name, HatchBabyRestFavoriteSelect)
             assert hasattr(entity, func), name
             # And every favorite service takes the slot it is meant to act on.
-            if name != SERVICE_SET_SLEEP_TIMER:
+            if name in (SERVICE_SET_FAVORITE, SERVICE_SAVE_FAVORITE):
                 assert "slot" in {str(key) for key in schema}, name
 
     def test_every_service_is_documented(self):
@@ -300,6 +307,7 @@ class TestServiceRegistration:
             SERVICE_SAVE_FAVORITE,
             SERVICE_SET_FAVORITE,
             SERVICE_SET_SLEEP_TIMER,
+            SERVICE_SET_SOUND,
         )
 
         documented = yaml.safe_load(
@@ -312,11 +320,13 @@ class TestServiceRegistration:
             SERVICE_SET_FAVORITE,
             SERVICE_SAVE_FAVORITE,
             SERVICE_SET_SLEEP_TIMER,
+            SERVICE_SET_SOUND,
         }
         for name in (
             SERVICE_SET_FAVORITE,
             SERVICE_SAVE_FAVORITE,
             SERVICE_SET_SLEEP_TIMER,
+            SERVICE_SET_SOUND,
         ):
             assert documented[name]["target"]["entity"]["domain"] == "select", name
         for name in (SERVICE_SET_FAVORITE, SERVICE_SAVE_FAVORITE):
@@ -324,6 +334,7 @@ class TestServiceRegistration:
         timer = documented[SERVICE_SET_SLEEP_TIMER]["fields"]["duration"]
         assert timer["required"] is True
         assert "duration" in timer["selector"]
+        assert documented[SERVICE_SET_SOUND]["fields"]["sound"]["required"] is True
 
     def test_service_schema_offers_every_sound(self):
         """Test the documented sound list matches the enum.
@@ -546,3 +557,148 @@ class TestHatchBabyRestTimerSelect:
 
         with pytest.raises(vol.Invalid):
             schema({"duration": {"hours": 18, "minutes": 13}})
+
+
+class TestHatchBabyRestSoundSelect:
+    """Tests for HatchBabyRestSoundSelect and real-device BLE commands."""
+
+    @pytest.fixture
+    def sound_select(
+        self, mock_coordinator: HatchBabyRestUpdateCoordinator
+    ) -> HatchBabyRestSoundSelect:
+        """Create a sound select entity over a mocked device."""
+        device = mock_coordinator.hatch_rest_device
+        device.set_sound = AsyncMock()
+        device.set_volume = AsyncMock()
+        device.set_brightness = AsyncMock()
+        device.turn_power_on = AsyncMock()
+        return HatchBabyRestSoundSelect(mock_coordinator)
+
+    def test_options_and_identity(self, sound_select: HatchBabyRestSoundSelect):
+        """Test entity name, unique_id, and friendly sound options."""
+        assert sound_select.unique_id == "aabbccddeeff_sound"
+        assert sound_select.name == "Hatch Rest Sound"
+        assert sound_select.options == SOUND_OPTIONS
+        assert "White Noise" in sound_select.options
+        assert "None" in sound_select.options
+
+    def test_current_option(self, sound_select: HatchBabyRestSoundSelect):
+        """Test current_option reflects power and active sound."""
+        device = sound_select._hatch_rest_device
+        device.power = False
+        device.sound = PyHatchBabyRestSound.rain
+        assert sound_select.current_option == OPTION_NONE
+
+        device.power = True
+        assert sound_select.current_option == "Rain"
+
+        device.sound = PyHatchBabyRestSound.noise
+        assert sound_select.current_option == "White Noise"
+
+        device.sound = None
+        assert sound_select.current_option is None
+
+    @pytest.mark.asyncio
+    async def test_select_option_powers_on_darkens_and_unmutes(
+        self, sound_select: HatchBabyRestSoundSelect
+    ):
+        """Test selecting a sound from off darkens light, powers on, and unmutes."""
+        device = sound_select._hatch_rest_device
+        device.power = False
+        device.brightness = 128
+        device.volume = 0
+
+        await sound_select.async_select_option("White Noise")
+
+        device.set_brightness.assert_awaited_once_with(0)
+        device.turn_power_on.assert_awaited_once()
+        device.set_volume.assert_awaited_once_with(100)
+        device.set_sound.assert_awaited_once_with(PyHatchBabyRestSound.noise)
+
+    @pytest.mark.asyncio
+    async def test_select_none_sets_sound_without_powering_on(
+        self, sound_select: HatchBabyRestSoundSelect
+    ):
+        """Test selecting None sets sound to none without powering on."""
+        device = sound_select._hatch_rest_device
+        device.power = False
+
+        await sound_select.async_select_option("off")
+
+        device.turn_power_on.assert_not_awaited()
+        device.set_sound.assert_awaited_once_with(PyHatchBabyRestSound.none)
+
+    @pytest.mark.asyncio
+    async def test_select_unknown_option_ignored(
+        self, sound_select: HatchBabyRestSoundSelect
+    ):
+        """Test an unknown sound option is ignored."""
+        await sound_select.async_select_option("nonexistent_sound")
+
+        sound_select._hatch_rest_device.set_sound.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_set_sound_service_with_volume(
+        self, sound_select: HatchBabyRestSoundSelect
+    ):
+        """Test async_set_sound sets both sound and volume."""
+        device = sound_select._hatch_rest_device
+        device.power = True
+        device.volume = 50
+
+        await sound_select.async_set_sound("pink noise", volume=200)
+
+        device.set_sound.assert_awaited_once_with(PyHatchBabyRestSound.noise)
+        device.set_volume.assert_awaited_once_with(200)
+
+    @pytest.mark.asyncio
+    async def test_real_device_ble_commands_for_sound_selection_and_set_sound(
+        self, mock_coordinator: HatchBabyRestUpdateCoordinator
+    ):
+        """Prove the exact BLE GATT commands sent to a real Hatch Rest device."""
+        from unittest.mock import MagicMock
+
+        ble_device = MagicMock()
+        ble_device.address = "AA:BB:CC:DD:EE:FF"
+        ble_device.name = "Hatch Rest"
+        api = PyHatchBabyRestAsync(ble_device)
+        api.power = False
+        api.color = (255, 0, 255)
+        api.brightness = 128
+        api.sound = PyHatchBabyRestSound.none
+        api.volume = 0
+
+        sent: list[bytes] = []
+
+        async def fake_write(
+            char_specifier: str, data: bytes, response: bool = False
+        ) -> None:
+            assert char_specifier == CHAR_TX
+            assert response is True
+            sent.append(bytes(data))
+
+        client = MagicMock()
+        client.is_connected = True
+        client.write_gatt_char = AsyncMock(side_effect=fake_write)
+        client.read_gatt_char = AsyncMock(
+            return_value=bytearray.fromhex("54f8001c9643ff00ff005303c8501f00000000")
+        )
+        client.start_notify = AsyncMock()
+        api._client = client
+
+        mock_coordinator.hatch_rest_device = api
+        sound_select = HatchBabyRestSoundSelect(mock_coordinator)
+
+        await sound_select.async_set_sound("White Noise", volume=200)
+        await sound_select.async_select_option("None")
+
+        assert sent == [
+            b"SCff00ff00",  # zero brightness first (PROTOCOL.md: power is a mute)
+            b"SI01",  # power on second
+            b"SV64",  # unmute volume 0 -> 100 (0x64)
+            b"SN03",  # sound 3 = noise (White Noise)
+            b"SVc8",  # requested volume 200 (0xc8)
+            b"SN00",  # sound 0 = none
+        ]
+        # Verify CHAR_FEEDBACK constant matches the protocol
+        assert CHAR_FEEDBACK == "02260002-5efd-47eb-9c1a-de53f7a2b232"

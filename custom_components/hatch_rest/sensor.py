@@ -122,9 +122,7 @@ class HatchBabyRestProgramsOverviewSensor(HatchBabyRestEntity, SensorEntity):  #
         """Return a count of configured programs."""
         programs = self._hatch_rest_device.programs
         populated = [
-            p
-            for p in programs.values()
-            if not p.get("empty", False) and "time" in p
+            p for p in programs.values() if not p.get("empty", False) and "time" in p
         ]
         if not populated:
             return "No Programs"
@@ -183,9 +181,7 @@ class HatchBabyRestProgramsOverviewSensor(HatchBabyRestEntity, SensorEntity):  #
             "configured_count": len(program_list),
             "programs": program_list,
             "summary": (
-                "\n".join(summary_lines)
-                if summary_lines
-                else "No configured programs"
+                "\n".join(summary_lines) if summary_lines else "No configured programs"
             ),
         }
 
