@@ -141,7 +141,7 @@ class HatchBabyRestProgramSwitch(HatchBabyRestEntity, SwitchEntity):  # pyright:
     def name(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         """Return the name of the entity.
 
-        With the name the program was given on the device when there is one,
+        With the name and time the program was given on the device when there is one,
         since that says what it is for where "Program 3" does not. The entity
         id is fixed on first registration, so it does not move with this.
         """
@@ -149,8 +149,14 @@ class HatchBabyRestProgramSwitch(HatchBabyRestEntity, SwitchEntity):  # pyright:
             return None
         name = f"{self._hatch_rest_device.name.title()} Program {self._slot}"
         program = self._hatch_rest_device.programs.get(self._slot)
-        if program is not None and program.get("name"):
-            name = f"{name} ({program['name']})"
+        if program is not None:
+            details = []
+            if program.get("name"):
+                details.append(program["name"])
+            if program.get("time"):
+                details.append(program["time"])
+            if details:
+                name = f"{name} ({', '.join(details)})"
         return name
 
     @property
@@ -193,10 +199,21 @@ class HatchBabyRestProgramSwitch(HatchBabyRestEntity, SwitchEntity):  # pyright:
         if program is None:
             return {}
 
+        duration_sec = program["duration_seconds"]
+        duration_str = (
+            f"{duration_sec // 3600}h"
+            if duration_sec % 3600 == 0
+            else f"{duration_sec // 60}m"
+        )
+        days_str = ", ".join(program.get("days", []))
+        prog_name = program.get("name") or f"Program {self._slot}"
+
         return {
             "name": program.get("name"),
+            "summary": f"{program.get('time', '--:--')} ({days_str}) - {prog_name}",
             "time": program["time"],
             "days": program["days"],
+            "duration": duration_str,
             "duration_seconds": program["duration_seconds"],
             # Kept because the layout here was worked out from real slots
             # against two published sources that had it wrong, and the bytes

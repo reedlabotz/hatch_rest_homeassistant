@@ -159,6 +159,7 @@ class HatchBabyRestMediaPlayer(HatchBabyRestEntity, RestoreEntity, MediaPlayerEn
             | MediaPlayerEntityFeature.PAUSE
             | MediaPlayerEntityFeature.VOLUME_SET
             | MediaPlayerEntityFeature.SELECT_SOURCE
+            | MediaPlayerEntityFeature.PLAY_MEDIA
         )
 
     @property
@@ -178,15 +179,44 @@ class HatchBabyRestMediaPlayer(HatchBabyRestEntity, RestoreEntity, MediaPlayerEn
         _LOGGER.debug("media_player setting volume_level = %s", int(255 * volume))
         await self._hatch_rest_device.set_volume(int(255 * volume))
 
+    async def async_play_media(
+        self, media_type: str, media_id: str, **kwargs: Any
+    ) -> None:
+        """Play a piece of media (sound track)."""
+        await self.async_select_source(media_id)
+
     async def async_select_source(self, source: str) -> None:
         """Select a source from the list of available sources."""
-        source_number = PyHatchBabyRestSound[source.lower()]
+        source_clean = source.strip().lower()
+        if source_clean in ("white noise", "pink noise", "white_noise", "pink_noise"):
+            source_number = PyHatchBabyRestSound.noise
+        elif source_clean.isdigit():
+            source_number = PyHatchBabyRestSound(int(source_clean))
+        else:
+            source_number = PyHatchBabyRestSound[source_clean.replace(" ", "_")]
+
         self._previous_sound = PyHatchBabyRestSound(source_number)
         _LOGGER.debug(
             "media_player setting source = %d (%s) ",
             source_number,
             PyHatchBabyRestSound(source_number).name,
         )
+
+        if source_number == PyHatchBabyRestSound.none:
+            await self._hatch_rest_device.set_sound(PyHatchBabyRestSound.none)
+            return
+
+        if not self._hatch_rest_device.power:
+            if self._hatch_rest_device.brightness:
+                _LOGGER.debug("media_player darkening light before powering on")
+                await self._hatch_rest_device.set_brightness(0)
+            _LOGGER.debug("media_player _hatch_rest_device power not on -- turning on")
+            await self._hatch_rest_device.turn_power_on()
+
+        if self._hatch_rest_device.volume == 0:
+            _LOGGER.debug("media_player unmuting zero volume to 100")
+            await self._hatch_rest_device.set_volume(100)
+
         await self._hatch_rest_device.set_sound(source_number)
 
     async def async_media_pause(self) -> None:
@@ -222,3 +252,4 @@ class HatchBabyRestMediaPlayer(HatchBabyRestEntity, RestoreEntity, MediaPlayerEn
             PyHatchBabyRestSound(previous_sound).name,
         )
         await self._hatch_rest_device.set_sound(previous_sound)
+

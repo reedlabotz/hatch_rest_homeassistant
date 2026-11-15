@@ -104,6 +104,46 @@ set_sleep_timer:
       selector:
         duration:
 
+set_sound:
+  name: Set sound
+  description: >-
+    Set the sound playing on the Hatch Rest and optionally its volume.
+    Automatically turns on the device if it is powered off.
+  target:
+    entity:
+      integration: hatch_rest
+      domain: select
+  fields:
+    sound:
+      name: Sound
+      description: Which sound to play.
+      required: true
+      example: "White Noise"
+      selector:
+        select:
+          options:
+            - "None"
+            - "Stream"
+            - "White Noise"
+            - "Dryer"
+            - "Ocean"
+            - "Wind"
+            - "Rain"
+            - "Bird"
+            - "Crickets"
+            - "Brahms"
+            - "Twinkle"
+            - "Rockabye"
+    volume:
+      name: Volume
+      description: Sound volume from 0 to 255.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: slider
+
 send_command:
   name: Send command
   description: >-

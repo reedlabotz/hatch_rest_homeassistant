@@ -38,6 +38,36 @@ OPTION_NONE = "None"
 SERVICE_SET_FAVORITE = "set_favorite"
 SERVICE_SAVE_FAVORITE = "save_favorite"
 SERVICE_SET_SLEEP_TIMER = "set_sleep_timer"
+SERVICE_SET_SOUND = "set_sound"
+
+SOUND_MAP: dict[PyHatchBabyRestSound, str] = {
+    PyHatchBabyRestSound.none: "None",
+    PyHatchBabyRestSound.stream: "Stream",
+    PyHatchBabyRestSound.noise: "White Noise",
+    PyHatchBabyRestSound.dryer: "Dryer",
+    PyHatchBabyRestSound.ocean: "Ocean",
+    PyHatchBabyRestSound.wind: "Wind",
+    PyHatchBabyRestSound.rain: "Rain",
+    PyHatchBabyRestSound.bird: "Bird",
+    PyHatchBabyRestSound.crickets: "Crickets",
+    PyHatchBabyRestSound.brahms: "Brahms",
+    PyHatchBabyRestSound.twinkle: "Twinkle",
+    PyHatchBabyRestSound.rockabye: "Rockabye",
+}
+
+SOUND_OPTIONS: list[str] = list(SOUND_MAP.values())
+OPTION_TO_SOUND: dict[str, PyHatchBabyRestSound] = {
+    v.lower(): k for k, v in SOUND_MAP.items()
+}
+OPTION_TO_SOUND.update(
+    {
+        "noise": PyHatchBabyRestSound.noise,
+        "white_noise": PyHatchBabyRestSound.noise,
+        "pink noise": PyHatchBabyRestSound.noise,
+        "pink_noise": PyHatchBabyRestSound.noise,
+        "off": PyHatchBabyRestSound.none,
+    }
+)
 
 SLOT_SCHEMA = {
     vol.Required("slot"): vol.All(vol.Coerce(int), vol.Range(min=1, max=FAVORITE_SLOTS))
@@ -66,6 +96,11 @@ SET_SLEEP_TIMER_SCHEMA = {
             msg="duration must be between 0 and 18:12:15",
         ),
     )
+}
+
+SET_SOUND_SCHEMA = {
+    vol.Required("sound"): cv.string,
+    vol.Optional("volume"): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
 }
 
 # How close a running timer's end has to be to the one a preset set, for the
@@ -97,11 +132,17 @@ async def async_setup_entry(
         SET_SLEEP_TIMER_SCHEMA,
         "async_set_sleep_timer",
     )
+    platform.async_register_entity_service(
+        SERVICE_SET_SOUND,
+        SET_SOUND_SCHEMA,
+        "async_set_sound",
+    )
 
     async_add_entities(
         [
             HatchBabyRestFavoriteSelect(coordinator),
             HatchBabyRestTimerSelect(coordinator),
+            HatchBabyRestSoundSelect(coordinator),
         ],
         update_before_add=False,
     )
@@ -365,3 +406,80 @@ class HatchBabyRestTimerSelect(HatchBabyRestTimerEntity, SelectEntity, RestoreEn
 
         await self._hatch_rest_device.async_set_timer(seconds)
         self.async_write_ha_state()
+
+
+class HatchBabyRestSoundSelect(HatchBabyRestEntity, SelectEntity):  # pyright: ignore[reportIncompatibleVariableOverride]
+    """The sound the Hatch Rest is currently playing."""
+
+    _attr_icon = "mdi:music-note"
+
+    def __init__(self, coordinator: HatchBabyRestUpdateCoordinator) -> None:
+        """Initialize the entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.unique_id}_sound"
+
+    @property
+    def name(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """Return the name of the entity."""
+        if self._hatch_rest_device.name:
+            return f"{self._hatch_rest_device.name.title()} Sound"
+        return None
+
+    @property
+    def options(self) -> list[str]:
+        """Return the list of available sound options."""
+        return SOUND_OPTIONS
+
+    @property
+    def current_option(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """Return the currently playing sound."""
+        if not self._hatch_rest_device.power:
+            return OPTION_NONE
+
+        sound = self._hatch_rest_device.sound
+        if sound is None:
+            return None
+        return SOUND_MAP.get(sound, OPTION_NONE)
+
+    async def async_select_option(self, option: str) -> None:
+        """Select a sound track."""
+        clean = option.strip().lower()
+        if clean in OPTION_TO_SOUND:
+            target_sound = OPTION_TO_SOUND[clean]
+        elif clean.isdigit():
+            target_sound = PyHatchBabyRestSound(int(clean))
+        else:
+            try:
+                target_sound = PyHatchBabyRestSound[clean.replace(" ", "_")]
+            except KeyError:
+                _LOGGER.warning("Unknown sound option: %s", option)
+                return
+
+        _LOGGER.debug(
+            "select setting sound to %s (%d)", target_sound.name, int(target_sound)
+        )
+
+        if target_sound == PyHatchBabyRestSound.none:
+            await self._hatch_rest_device.set_sound(PyHatchBabyRestSound.none)
+            return
+
+        if not self._hatch_rest_device.power:
+            if self._hatch_rest_device.brightness:
+                _LOGGER.debug("select darkening light before powering on")
+                await self._hatch_rest_device.set_brightness(0)
+            _LOGGER.debug("select powering on device for sound playback")
+            await self._hatch_rest_device.turn_power_on()
+
+        if self._hatch_rest_device.volume == 0:
+            _LOGGER.debug("select unmuting zero volume to 100")
+            await self._hatch_rest_device.set_volume(100)
+
+        await self._hatch_rest_device.set_sound(target_sound)
+
+    async def async_set_sound(self, sound: str, volume: int | None = None) -> None:
+        """Entity service to set sound and optional volume."""
+        await self.async_select_option(sound)
+        if volume is not None:
+            _LOGGER.debug("select setting volume to %d", volume)
+            await self._hatch_rest_device.set_volume(volume)
+

@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 import logging
+from typing import Any
 
 from homeassistant.components.bluetooth import (
     BluetoothChange,
@@ -85,24 +86,23 @@ class HatchBabyRestUpdateCoordinator(DataUpdateCoordinator):
 
     def get_current_data(
         self,
-    ) -> dict[str, int | tuple[int, int, int] | bool | PyHatchBabyRestSound | None]:
+    ) -> dict[str, Any]:
         """Get the current state of the Hatch Rest device."""
-        data: dict[
-            str, int | tuple[int, int, int] | bool | PyHatchBabyRestSound | None
-        ] = {
+        data: dict[str, Any] = {
             "active_favorite": self.hatch_rest_device.active_favorite,
             "brightness": self.hatch_rest_device.brightness,
             "color": self.hatch_rest_device.color,
             "power": self.hatch_rest_device.power,
             "sound": self.hatch_rest_device.sound,
             "volume": self.hatch_rest_device.volume,
+            "programs": dict(self.hatch_rest_device.programs),
         }
         _LOGGER.debug("%s data updated: %s", self.hatch_rest_device.address, data)
         return data
 
     async def _async_update_data(
         self,
-    ) -> dict[str, int | tuple[int, int, int] | bool | PyHatchBabyRestSound | None]:
+    ) -> dict[str, Any]:
         _LOGGER.debug("Starting coordinator async update")
 
         age = self.hatch_rest_device.seconds_since_state_update()
