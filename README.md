@@ -136,7 +136,7 @@ entity: select.nursery_hatch_favorite
 # show_none_button: true
 # show_details: true
 # hide_empty: true
-# hide_disabled: false
+# hide_disabled: true
 ```
 
 ## 📡 Bluetooth

@@ -25,8 +25,10 @@ const SOUND_LABELS = {
 
 const SOUND_ICONS = {
   none: "mdi:volume-off",
+  "no sound": "mdi:volume-off",
   stream: "mdi:waves",
   noise: "mdi:waveform",
+  "white noise": "mdi:waveform",
   dryer: "mdi:fan",
   ocean: "mdi:waves",
   wind: "mdi:pine-tree",
@@ -512,7 +514,696 @@ const SHARED_CARD_STYLES = `
   .mush-icon-btn ha-icon {
     --mdc-icon-size: 18px;
   }
+  .mush-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--mush-cols, 2), minmax(0, 1fr));
+    gap: 10px;
+  }
+  @container (max-width: 380px) {
+    .mush-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .mush-fav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+    background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+    color: var(--primary-text-color);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    min-width: 0;
+    transition: background 0.15s ease, border-color 0.2s ease, transform 0.1s ease;
+  }
+  .mush-fav:hover {
+    background: color-mix(in srgb, var(--primary-text-color) 10%, transparent);
+  }
+  .mush-fav:active {
+    transform: scale(0.98);
+  }
+  .mush-fav.active {
+    background: color-mix(in srgb, var(--fav-accent) 16%, transparent);
+    border-color: color-mix(in srgb, var(--fav-accent) 55%, transparent);
+  }
+  .mush-fav-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+    gap: 2px;
+  }
+  .mush-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mush-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .mush-meta-item ha-icon {
+    --mdc-icon-size: 13px;
+  }
+  .hatch-badge-sm {
+    width: 36px;
+    height: 36px;
+    pointer-events: none;
+  }
+  .mush-playing-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fav-accent);
+    flex-shrink: 0;
+  }
+  .mush-playing-badge ha-icon {
+    --mdc-icon-size: 18px;
+  }
 `;
+
+function filterFavoriteEntries(favState, { activeOption, hideEmpty = true, hideDisabled = true }) {
+  const favoritesMap = favState?.attributes?.favorites || {};
+  const options = Array.isArray(favState?.attributes?.options)
+    ? favState.attributes.options.filter((o) => o !== "None")
+    : [];
+
+  let entries = Object.keys(favoritesMap)
+    .sort((a, b) => Number(a) - Number(b))
+    .map((slot) => ({
+      slot: Number(slot),
+      ...favoritesMap[slot],
+    }));
+
+  if (entries.length === 0 && options.length > 0) {
+    options.forEach((opt, idx) => {
+      entries.push({
+        slot: idx + 1,
+        name: opt,
+        color: null,
+        brightness: null,
+        sound: null,
+        volume: null,
+        enabled: true,
+      });
+    });
+  } else {
+    entries = entries.filter((fav) => {
+      const optionName = fav.name || `Favorite ${fav.slot}`;
+      if (activeOption === optionName) return true;
+      if (hideDisabled && fav.enabled === false) return false;
+      if (hideEmpty) {
+        const noLight = fav.brightness === 0 || fav.brightness === null;
+        const noSound = !fav.sound || String(fav.sound).toLowerCase() === "none" || fav.volume === 0;
+        if (noLight && noSound) return false;
+      }
+      return true;
+    });
+  }
+  return entries;
+}
+
+function renderFavoriteTilesHtml(entries, { activeOption, isOff, showDetails = true }) {
+  return entries
+    .map((fav) => {
+      const optionName = fav.name || `Favorite ${fav.slot}`;
+      const isActive = !isOff && activeOption === optionName;
+      const colorCss = formatColorCss(fav.color, fav.brightness);
+      const soundName = formatSoundName(fav.sound);
+      const soundIcon = getSoundIcon(fav.sound);
+      const volPct =
+        typeof fav.volume === "number"
+          ? `${Math.round((fav.volume / 255) * 100)}%`
+          : "";
+      const brightPct =
+        typeof fav.brightness === "number"
+          ? `${Math.round((fav.brightness / 255) * 100)}%`
+          : "";
+
+      const tileAccent =
+        colorCss && !isRainbowColor(fav.color)
+          ? `rgb(${fav.color[0]}, ${fav.color[1]}, ${fav.color[2]})`
+          : "var(--primary-color)";
+
+      const secondaryParts = [];
+      if (fav.sound !== "none" && volPct) {
+        secondaryParts.push(
+          `<span class="mush-meta-item" title="${escapeHtml(soundName)}"><ha-icon icon="mdi:volume-medium"></ha-icon>${volPct}</span>`
+        );
+      }
+      if (brightPct) {
+        secondaryParts.push(
+          `<span class="mush-meta-item" title="Brightness"><ha-icon icon="mdi:brightness-6"></ha-icon>${fav.brightness === 0 ? "Off" : brightPct}</span>`
+        );
+      }
+
+      const favIsLit = Array.isArray(fav.color) && fav.brightness > 0;
+      const favHatchSvg = renderMiniHatchSvg({
+        isLit: favIsLit,
+        rgb: fav.color,
+        brightness: fav.brightness ?? 0,
+        size: 30,
+      });
+      const favSoundOverlay =
+        fav.sound && String(fav.sound).toLowerCase() !== "none"
+          ? `<span class="hatch-sound-overlay ${favIsLit ? "" : "unlit"}"><ha-icon icon="${escapeHtml(soundIcon)}"></ha-icon></span>`
+          : `<span class="hatch-sound-overlay unlit"><ha-icon icon="mdi:volume-off"></ha-icon></span>`;
+
+      return `
+        <button
+          class="mush-fav ${isActive ? "active" : ""}"
+          data-option="${escapeHtml(optionName)}"
+          style="--fav-accent: ${tileAccent};"
+          title="Play ${escapeHtml(optionName)} (${escapeHtml(soundName)})"
+        >
+          <div class="hatch-badge hatch-badge-sm">
+            ${favHatchSvg}
+            ${favSoundOverlay}
+          </div>
+          <div class="mush-fav-text">
+            <div class="mush-primary">${escapeHtml(optionName)}</div>
+            ${
+              showDetails && secondaryParts.length
+                ? `<div class="mush-secondary mush-meta-row">${secondaryParts.join("")}</div>`
+                : ""
+            }
+          </div>
+          ${
+            isActive
+              ? `<span class="mush-playing-badge" title="Playing" aria-label="Playing">
+                   <ha-icon icon="mdi:volume-high"></ha-icon>
+                 </span>`
+              : ""
+          }
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function deriveAllDeviceEntities(config) {
+  const entity = config?.entity || "";
+  let base = null;
+  if (entity.includes(".")) {
+    const [, objectId] = entity.split(".", 2);
+    for (const suffix of ["_programs", "_favorite", "_switch", "_light", "_media_player", "_sound", "_timer_ends"]) {
+      if (objectId.endsWith(suffix)) {
+        base = objectId.slice(0, -suffix.length);
+        break;
+      }
+    }
+  }
+  return {
+    powerId: config?.power_entity || (base ? `switch.${base}_switch` : null),
+    lightId: config?.light_entity || (base ? `light.${base}_light` : null),
+    mediaId: config?.media_entity || (base ? `media_player.${base}_media_player` : null),
+    favoriteId: config?.favorite_entity || (base ? `select.${base}_favorite` : null),
+    soundId: config?.sound_entity || (base ? `select.${base}_sound` : null),
+    timerId: config?.timer_entity || (base ? `sensor.${base}_timer_ends` : null),
+    programsId: config?.programs_entity || (base ? `sensor.${base}_programs` : null),
+  };
+}
+
+function rgbToHex(rgb) {
+  if (!Array.isArray(rgb) || rgb.length !== 3) return "#ff9329";
+  return (
+    "#" +
+    rgb
+      .map((c) => Math.max(0, Math.min(255, Number(c) || 0)).toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+function hexToRgb(hex) {
+  const clean = String(hex || "").replace("#", "");
+  if (clean.length !== 6) return [255, 147, 41];
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16),
+  ];
+}
+
+const COLOR_PRESETS = [
+  { label: "Warm Amber", rgb: [255, 147, 41] },
+  { label: "Soft Red", rgb: [239, 68, 68] },
+  { label: "Coral", rgb: [251, 113, 133] },
+  { label: "Sky Blue", rgb: [96, 165, 250] },
+  { label: "Mint", rgb: [74, 222, 128] },
+  { label: "Lavender", rgb: [168, 85, 247] },
+];
+
+class HatchRestDialog extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass = null;
+    this._entities = {};
+    this._title = "Hatch Rest";
+    this._onKeyDown = (e) => {
+      if (e.key === "Escape") this.close();
+    };
+  }
+
+  open({ hass, entities, title }) {
+    this._hass = hass;
+    this._entities = entities || {};
+    this._title = title || "Hatch Rest";
+    document.addEventListener("keydown", this._onKeyDown);
+    if (!this.isConnected) {
+      document.body.appendChild(this);
+    }
+    this._render();
+  }
+
+  close() {
+    document.removeEventListener("keydown", this._onKeyDown);
+    if (this.isConnected) {
+      this.remove();
+    }
+  }
+
+  updateHass(hass) {
+    this._hass = hass;
+    if (this.isConnected) {
+      this._render();
+    }
+  }
+
+  _render() {
+    if (!this.shadowRoot || !this._hass) return;
+    const { powerId, lightId, mediaId, favoriteId, soundId } = this._entities;
+
+    const powerState = powerId ? this._hass.states?.[powerId] : null;
+    const lightState = lightId ? this._hass.states?.[lightId] : null;
+    const mediaState = mediaId ? this._hass.states?.[mediaId] : null;
+    const favState = favoriteId ? this._hass.states?.[favoriteId] : null;
+    const soundState = soundId ? this._hass.states?.[soundId] : null;
+
+    const isOff = powerState ? powerState.state === "off" : false;
+    const liveLight = getLiveLightVisual(this._hass, lightId, powerId, null);
+    const liveSoundIcon = getLiveSoundIcon(this._hass, mediaId, powerId, null);
+    const hatchSvg = renderMiniHatchSvg({ ...liveLight, size: 36 });
+
+    const brightPct = liveLight.isLit
+      ? Math.round((liveLight.brightness / 255) * 100)
+      : 0;
+    const isRainbow = lightState?.attributes?.effect === "Rainbow";
+    const currentHex = rgbToHex(liveLight.rgb);
+
+    // Volume 0..100
+    const volLevel = mediaState?.attributes?.volume_level;
+    const volPct = typeof volLevel === "number" ? Math.round(volLevel * 100) : 40;
+
+    // Sound options
+    const soundOptions = soundState?.attributes?.options ||
+      mediaState?.attributes?.source_list ||
+      Object.values(SOUND_LABELS);
+    const currentSound = isOff
+      ? "None"
+      : soundState?.state || mediaState?.attributes?.source || "None";
+
+    // Favorites (using same filter & tile renderer as HatchRestFavoritesCard)
+    const activeFav = isOff ? "None" : favState?.state || "None";
+    const favEntries = favState
+      ? filterFavoriteEntries(favState, {
+          activeOption: favState.state,
+          hideEmpty: true,
+          hideDisabled: true,
+        })
+      : [];
+    const favTilesHtml = renderFavoriteTilesHtml(favEntries, {
+      activeOption: favState?.state,
+      isOff,
+      showDetails: true,
+    });
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        ${SHARED_CARD_STYLES}
+        :host {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+          background: rgba(0, 0, 0, 0.55);
+          backdrop-filter: blur(4px);
+          font-family: var(--paper-font-body1_-_font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+        }
+        .dialog-card {
+          width: 100%;
+          max-width: 420px;
+          max-height: 90vh;
+          overflow-y: auto;
+          background: var(--ha-card-background, var(--card-background-color, #1c2433));
+          color: var(--primary-text-color, #f8fafc);
+          border-radius: 16px;
+          border: 1px solid var(--ha-card-border-color, var(--divider-color, rgba(148,163,184,0.2)));
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+        .dlg-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .dlg-header-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 0;
+        }
+        .dlg-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .section {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .section-label {
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: var(--secondary-text-color, #94a3b8);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .pill-grid {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid color-mix(in srgb, var(--primary-text-color) 10%, transparent);
+          background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+          color: var(--primary-text-color);
+          font-size: 12px;
+          font-weight: 500;
+          font-family: inherit;
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .pill:hover {
+          background: color-mix(in srgb, var(--primary-text-color) 12%, transparent);
+        }
+        .pill.active {
+          background: color-mix(in srgb, var(--pill-accent, var(--primary-color)) 20%, transparent);
+          border-color: color-mix(in srgb, var(--pill-accent, var(--primary-color)) 65%, transparent);
+          color: var(--primary-text-color);
+        }
+        .pill ha-icon {
+          --mdc-icon-size: 14px;
+          color: var(--secondary-text-color);
+        }
+        .pill.active ha-icon {
+          color: var(--primary-color);
+        }
+        .pill-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+        .slider-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .slider-row ha-icon {
+          --mdc-icon-size: 18px;
+          color: var(--secondary-text-color);
+          flex-shrink: 0;
+        }
+        input[type="range"] {
+          flex: 1;
+          accent-color: var(--primary-color, #38bdf8);
+          cursor: pointer;
+        }
+        .color-row {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .swatch-btn {
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          border: 2px solid transparent;
+          cursor: pointer;
+          padding: 0;
+          transition: transform 0.12s ease, border-color 0.15s ease;
+        }
+        .swatch-btn:hover { transform: scale(1.1); }
+        .swatch-btn.active {
+          border-color: var(--primary-text-color);
+          transform: scale(1.1);
+        }
+        .color-input-wrap {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 3px 8px 3px 4px;
+          border-radius: 999px;
+          border: 1px solid color-mix(in srgb, var(--primary-text-color) 12%, transparent);
+          background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+          font-size: 12px;
+          cursor: pointer;
+        }
+        input[type="color"] {
+          width: 22px;
+          height: 22px;
+          border: none;
+          border-radius: 50%;
+          padding: 0;
+          background: transparent;
+          cursor: pointer;
+        }
+      </style>
+      <div class="dialog-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(this._title)} Controls">
+        <div class="dlg-header">
+          <div class="dlg-header-left">
+            <div class="hatch-badge" style="cursor:default;">
+              ${hatchSvg}
+              ${
+                liveSoundIcon
+                  ? `<span class="hatch-sound-overlay ${liveLight.isLit ? "" : "unlit"}"><ha-icon icon="${escapeHtml(liveSoundIcon)}"></ha-icon></span>`
+                  : ""
+              }
+            </div>
+            <div class="mush-info">
+              <div class="mush-primary">${escapeHtml(this._title)}</div>
+              <div class="mush-secondary">${isOff ? "Off" : `${liveLight.isLit ? `Light ${brightPct}%` : "Light Off"} · ${escapeHtml(currentSound)}`}</div>
+            </div>
+          </div>
+          <div class="dlg-actions">
+            ${
+              powerId
+                ? `<button class="mush-icon-btn ${!isOff ? "active" : ""}" data-action="power" title="${isOff ? "Turn on" : "Turn off"}">
+                     <ha-icon icon="mdi:power"></ha-icon>
+                   </button>`
+                : ""
+            }
+            <button class="mush-icon-btn" data-action="close" title="Close">
+              <ha-icon icon="mdi:close"></ha-icon>
+            </button>
+          </div>
+        </div>
+
+        ${
+          favState
+            ? `<div class="section">
+                 <div class="section-label"><span>Favorites</span></div>
+                 <div class="mush-grid" style="--mush-cols:2;">
+                   ${favTilesHtml || `<div class="mush-secondary">No favorites loaded yet.</div>`}
+                 </div>
+               </div>`
+            : ""
+        }
+
+        <div class="section">
+          <div class="section-label">
+            <span>Noise / Sound</span>
+            <span>${volPct}%</span>
+          </div>
+          <div class="pill-grid">
+            ${soundOptions
+              .map((opt) => {
+                const isAct = String(currentSound).toLowerCase() === String(opt).toLowerCase();
+                const icon = getSoundIcon(opt);
+                return `<button class="pill ${isAct ? "active" : ""}" data-sound="${escapeHtml(opt)}"><ha-icon icon="${escapeHtml(icon)}"></ha-icon>${escapeHtml(opt)}</button>`;
+              })
+              .join("")}
+          </div>
+          ${
+            mediaState
+              ? `<div class="slider-row">
+                   <ha-icon icon="mdi:volume-medium"></ha-icon>
+                   <input type="range" min="0" max="100" value="${volPct}" data-slider="volume" aria-label="Volume" />
+                 </div>`
+              : ""
+          }
+        </div>
+
+        ${
+          lightState
+            ? `<div class="section">
+                 <div class="section-label">
+                   <span>Color & Brightness</span>
+                   <span>${liveLight.isLit ? `${brightPct}%` : "Off"}</span>
+                 </div>
+                 <div class="color-row">
+                   ${COLOR_PRESETS.map((p) => {
+                     const isAct =
+                       liveLight.isLit &&
+                       !isRainbow &&
+                       Array.isArray(liveLight.rgb) &&
+                       liveLight.rgb[0] === p.rgb[0] &&
+                       liveLight.rgb[1] === p.rgb[1] &&
+                       liveLight.rgb[2] === p.rgb[2];
+                     return `<button class="swatch-btn ${isAct ? "active" : ""}" data-rgb="${p.rgb.join(",")}" style="background:rgb(${p.rgb.join(",")});" title="${p.label}"></button>`;
+                   }).join("")}
+                   <button
+                     class="swatch-btn ${liveLight.isLit && isRainbow ? "active" : ""}"
+                     data-effect="Rainbow"
+                     style="background:conic-gradient(from 0deg, #ff595e, #ffca3a, #8ac926, #1982c4, #6a4c93, #ff595e);"
+                     title="Rainbow"
+                   ></button>
+                   <label class="color-input-wrap" title="Custom color">
+                     <input type="color" value="${currentHex}" data-picker="rgb" />
+                     <span>Custom</span>
+                   </label>
+                 </div>
+                 <div class="slider-row">
+                   <ha-icon icon="mdi:brightness-6"></ha-icon>
+                   <input type="range" min="0" max="100" value="${brightPct}" data-slider="brightness" aria-label="Brightness" />
+                 </div>
+               </div>`
+            : ""
+        }
+      </div>
+    `;
+
+    // Backdrop click to close
+    this.shadowRoot.host.onclick = (e) => {
+      if (e.composedPath()[0] === this) {
+        this.close();
+      }
+    };
+    this.shadowRoot.querySelector("[data-action='close']")?.addEventListener("click", () => this.close());
+    this.shadowRoot.querySelector("[data-action='power']")?.addEventListener("click", () => {
+      if (powerId) this._hass.callService("switch", "toggle", { entity_id: powerId });
+    });
+
+    this.shadowRoot.querySelectorAll(".mush-fav").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!favoriteId) return;
+        const option = btn.getAttribute("data-option");
+        if (!option) return;
+        const isAlreadyActive = btn.classList.contains("active");
+        this._hass.callService("select", "select_option", {
+          entity_id: favoriteId,
+          option: isAlreadyActive ? "None" : option,
+        });
+      });
+    });
+
+    this.shadowRoot.querySelectorAll("[data-sound]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const opt = btn.getAttribute("data-sound");
+        if (soundState && soundId) {
+          this._hass.callService("select", "select_option", { entity_id: soundId, option: opt });
+        } else if (mediaState && mediaId) {
+          this._hass.callService("media_player", "select_source", { entity_id: mediaId, source: opt });
+        }
+      });
+    });
+
+    this.shadowRoot.querySelector("[data-slider='volume']")?.addEventListener("change", (e) => {
+      if (!mediaId) return;
+      const val = Number(e.target.value) / 100;
+      this._hass.callService("media_player", "volume_set", {
+        entity_id: mediaId,
+        volume_level: val,
+      });
+    });
+
+    this.shadowRoot.querySelectorAll("[data-rgb]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!lightId) return;
+        const rgb = btn.getAttribute("data-rgb").split(",").map(Number);
+        this._hass.callService("light", "turn_on", {
+          entity_id: lightId,
+          rgb_color: rgb,
+        });
+      });
+    });
+
+    this.shadowRoot.querySelector("[data-effect='Rainbow']")?.addEventListener("click", () => {
+      if (!lightId) return;
+      this._hass.callService("light", "turn_on", {
+        entity_id: lightId,
+        effect: "Rainbow",
+      });
+    });
+
+    this.shadowRoot.querySelector("[data-picker='rgb']")?.addEventListener("change", (e) => {
+      if (!lightId) return;
+      const rgb = hexToRgb(e.target.value);
+      this._hass.callService("light", "turn_on", {
+        entity_id: lightId,
+        rgb_color: rgb,
+      });
+    });
+
+    this.shadowRoot.querySelector("[data-slider='brightness']")?.addEventListener("change", (e) => {
+      if (!lightId) return;
+      const pct = Number(e.target.value);
+      if (pct <= 0) {
+        this._hass.callService("light", "turn_off", { entity_id: lightId });
+      } else {
+        this._hass.callService("light", "turn_on", {
+          entity_id: lightId,
+          brightness: Math.round((pct / 100) * 255),
+        });
+      }
+    });
+  }
+}
+
+if (!customElements.get("hatch-rest-dialog")) {
+  customElements.define("hatch-rest-dialog", HatchRestDialog);
+}
+
+let _sharedHatchDialog = null;
+function openHatchDialog({ hass, entities, title }) {
+  if (!_sharedHatchDialog) {
+    _sharedHatchDialog = document.createElement("hatch-rest-dialog");
+  }
+  _sharedHatchDialog.open({ hass, entities, title });
+}
+
 
 /* -------------------------------------------------------------------------- */
 /*  1. Hatch Rest Program Playtime Card (Mushroom Style)                      */
@@ -557,6 +1248,9 @@ class HatchRestProgramCard extends HTMLElement {
   set hass(hass) {
     const oldHass = this._hass;
     this._hass = hass;
+    if (_sharedHatchDialog?.isConnected) {
+      _sharedHatchDialog.updateHass(hass);
+    }
     const watched = [
       this._config.entity,
       this._getPowerEntityId(),
@@ -972,16 +1666,19 @@ class HatchRestProgramCard extends HTMLElement {
       `;
     }
 
-    this.shadowRoot.querySelector("ha-card")?.addEventListener("click", () => {
-      this._openMoreInfo(this._config.entity);
-    });
+    const openDialog = () =>
+      openHatchDialog({
+        hass: this._hass,
+        entities: deriveAllDeviceEntities(this._config),
+        title,
+      });
+
+    this.shadowRoot.querySelector("ha-card")?.addEventListener("click", openDialog);
     this.shadowRoot
       .querySelector("[data-action='light-info']")
       ?.addEventListener("click", (e) => {
-        if (lightId && this._hass?.states?.[lightId]) {
-          e.stopPropagation();
-          this._openMoreInfo(lightId);
-        }
+        e.stopPropagation();
+        openDialog();
       });
     this.shadowRoot
       .querySelector("[data-action='power']")
@@ -1026,7 +1723,7 @@ class HatchRestFavoritesCard extends HTMLElement {
       show_none_button: true,
       show_details: true,
       hide_empty: true,
-      hide_disabled: false,
+      hide_disabled: true,
       ...config,
     };
     this._render();
@@ -1035,6 +1732,9 @@ class HatchRestFavoritesCard extends HTMLElement {
   set hass(hass) {
     const oldHass = this._hass;
     this._hass = hass;
+    if (_sharedHatchDialog?.isConnected) {
+      _sharedHatchDialog.updateHass(hass);
+    }
     const watched = [
       this._config.entity,
       this._getPowerEntityId(),
@@ -1390,19 +2090,22 @@ class HatchRestFavoritesCard extends HTMLElement {
       </ha-card>
     `;
 
+    const openDialog = () =>
+      openHatchDialog({
+        hass: this._hass,
+        entities: deriveAllDeviceEntities(this._config),
+        title: deriveDeviceTitle(stateObj, "Hatch Rest"),
+      });
+
     this.shadowRoot
       .querySelector("[data-action='entity-info']")
-      ?.addEventListener("click", () => {
-        this._openMoreInfo(this._config.entity);
-      });
+      ?.addEventListener("click", openDialog);
 
     this.shadowRoot
       .querySelector("[data-action='light-info']")
       ?.addEventListener("click", (e) => {
-        if (lightId && this._hass?.states?.[lightId]) {
-          e.stopPropagation();
-          this._openMoreInfo(lightId);
-        }
+        e.stopPropagation();
+        openDialog();
       });
 
     this.shadowRoot
