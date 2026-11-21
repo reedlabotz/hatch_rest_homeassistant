@@ -100,6 +100,45 @@ replacing what is there, and read back.
 Only devices connected at the time are offered. Empty program slots are not
 listed, since there is no known way to empty a slot on the device.
 
+## 🎨 Custom Lovelace Cards
+
+This integration bundles two custom Lovelace cards and registers them automatically with Home Assistant's frontend (they appear in the **Add Card** picker after restarting Home Assistant):
+
+| Dark Mode | Light Mode | Mobile |
+| :---: | :---: | :---: |
+| ![Hatch Rest Cards - Dark Mode](docs/images/hatch_cards_dark.png) | ![Hatch Rest Cards - Light Mode](docs/images/hatch_cards_light.png) | ![Hatch Rest Cards - Mobile](docs/images/hatch_cards_mobile.png) |
+
+### 1. Program Playtime (`custom:hatch-rest-program-card`)
+
+Displays live running playtime, remaining time, progress bar, sound, light color, and Toddler Lock status whenever a scheduled program is active. When idle, it can either hide itself or show the next scheduled program.
+
+```yaml
+type: custom:hatch-rest-program-card
+entity: sensor.nursery_hatch_programs
+# Optional:
+# title: Nursery Hatch
+# power_entity: switch.nursery_hatch_switch
+# timer_entity: sensor.nursery_hatch_timer_ends
+# hide_when_idle: false
+# show_next_program: true
+```
+
+### 2. Favorites Selector (`custom:hatch-rest-favorites-card`)
+
+Displays a visual grid of your stored favorites with their light color, sound, volume, and brightness. Tapping a tile plays that favorite (or stops it if already active).
+
+```yaml
+type: custom:hatch-rest-favorites-card
+entity: select.nursery_hatch_favorite
+# Optional:
+# title: Nursery Hatch Favorites
+# columns: 2
+# show_none_button: true
+# show_details: true
+# hide_empty: true
+# hide_disabled: false
+```
+
 ## 📡 Bluetooth
 
 Because the Hatch Rest is a BLE device, a compatible Home Assistant Bluetooth

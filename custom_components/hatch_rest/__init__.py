@@ -2,6 +2,8 @@
 
 import logging
 
+from pathlib import Path
+
 import voluptuous as vol
 from bleak.backends.device import BLEDevice
 from homeassistant import config_entries, core
@@ -32,6 +34,9 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+FRONTEND_URL_BASE = "/hatch_rest_static"
+FRONTEND_CARDS_URL = f"{FRONTEND_URL_BASE}/hatch-rest-cards.js"
+
 SERVICE_SEND_COMMAND = "send_command"
 SEND_COMMAND_SCHEMA = vol.Schema(
     {
@@ -51,8 +56,35 @@ PLATFORMS = [
 ]
 
 
+async def _async_register_frontend(hass: core.HomeAssistant) -> None:
+    """Serve the bundled Lovelace cards and register them with the frontend."""
+    if not hasattr(hass, "http") or hass.http is None:
+        return
+
+    frontend_dir = Path(__file__).parent / "frontend"
+    if not frontend_dir.is_dir():
+        return
+
+    try:
+        from homeassistant.components.http import StaticPathConfig
+
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(FRONTEND_URL_BASE, str(frontend_dir), cache_headers=False)]
+        )
+    except (ImportError, AttributeError):
+        hass.http.register_static_path(
+            FRONTEND_URL_BASE, str(frontend_dir), cache_headers=False
+        )
+
+    if "frontend" in hass.config.components:
+        from homeassistant.components.frontend import add_extra_js_url
+
+        add_extra_js_url(hass, FRONTEND_CARDS_URL)
+
+
 async def async_setup(hass: core.HomeAssistant, config: ConfigType) -> bool:
     """Register the actions that are not tied to one device's entities."""
+    await _async_register_frontend(hass)
 
     async def send_command(call: ServiceCall) -> ServiceResponse:
         """Send any command to one Hatch, and return what it replies with."""
