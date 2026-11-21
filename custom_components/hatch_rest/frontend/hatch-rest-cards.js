@@ -705,27 +705,81 @@ function renderFavoriteTilesHtml(entries, { activeOption, isOff, showDetails = t
     .join("");
 }
 
-function deriveAllDeviceEntities(config) {
+function resolveDeviceEntities(hass, config) {
   const entity = config?.entity || "";
   let base = null;
   if (entity.includes(".")) {
     const [, objectId] = entity.split(".", 2);
-    for (const suffix of ["_programs", "_favorite", "_switch", "_light", "_media_player", "_sound", "_timer_ends"]) {
+    for (const suffix of [
+      "_programs",
+      "_favorite",
+      "_switch",
+      "_light",
+      "_media_player",
+      "_sound",
+      "_timer_ends",
+    ]) {
       if (objectId.endsWith(suffix)) {
         base = objectId.slice(0, -suffix.length);
         break;
       }
     }
+    if (!base) base = objectId;
   }
-  return {
-    powerId: config?.power_entity || (base ? `switch.${base}_switch` : null),
-    lightId: config?.light_entity || (base ? `light.${base}_light` : null),
-    mediaId: config?.media_entity || (base ? `media_player.${base}_media_player` : null),
-    favoriteId: config?.favorite_entity || (base ? `select.${base}_favorite` : null),
-    soundId: config?.sound_entity || (base ? `select.${base}_sound` : null),
-    timerId: config?.timer_entity || (base ? `sensor.${base}_timer_ends` : null),
-    programsId: config?.programs_entity || (base ? `sensor.${base}_programs` : null),
-  };
+
+  const pickExisting = (candidates) =>
+    candidates.find((id) => id && hass?.states?.[id]) || candidates[0] || null;
+
+  // Prefer Home Assistant entity registry device_id lookup so renamed entities still match
+  const deviceId = hass?.entities?.[entity]?.device_id;
+  const deviceEntities =
+    deviceId && hass?.entities
+      ? Object.values(hass.entities).filter((e) => e.device_id === deviceId)
+      : [];
+
+  const byDomain = (domain, predicate = () => true) =>
+    deviceEntities.find((e) => e.entity_id?.startsWith(`${domain}.`) && predicate(e.entity_id))
+      ?.entity_id;
+
+  const powerId =
+    config?.power_entity ||
+    byDomain(
+      "switch",
+      (id) => !/_favorite_\d+_enabled$/.test(id) && !/_program_\d+$/.test(id)
+    ) ||
+    pickExisting(base ? [`switch.${base}_switch`, `switch.${base}`] : []);
+
+  const lightId =
+    config?.light_entity ||
+    byDomain("light") ||
+    pickExisting(base ? [`light.${base}_light`, `light.${base}`] : []);
+
+  const mediaId =
+    config?.media_entity ||
+    byDomain("media_player") ||
+    pickExisting(base ? [`media_player.${base}_media_player`, `media_player.${base}`] : []);
+
+  const favoriteId =
+    config?.favorite_entity ||
+    byDomain("select", (id) => id.endsWith("_favorite")) ||
+    pickExisting(base ? [`select.${base}_favorite`] : []);
+
+  const soundId =
+    config?.sound_entity ||
+    byDomain("select", (id) => id.endsWith("_sound")) ||
+    pickExisting(base ? [`select.${base}_sound`] : []);
+
+  const timerId =
+    config?.timer_entity ||
+    byDomain("sensor", (id) => id.endsWith("_timer_ends")) ||
+    pickExisting(base ? [`sensor.${base}_timer_ends`] : []);
+
+  const programsId =
+    config?.programs_entity ||
+    byDomain("sensor", (id) => id.endsWith("_programs")) ||
+    pickExisting(base ? [`sensor.${base}_programs`] : []);
+
+  return { powerId, lightId, mediaId, favoriteId, soundId, timerId, programsId };
 }
 
 function rgbToHex(rgb) {
@@ -858,6 +912,7 @@ class HatchRestDialog extends HTMLElement {
           font-family: var(--paper-font-body1_-_font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
         }
         .dialog-card {
+          container-type: inline-size;
           width: 100%;
           max-width: 420px;
           max-height: 90vh;
@@ -1669,7 +1724,7 @@ class HatchRestProgramCard extends HTMLElement {
     const openDialog = () =>
       openHatchDialog({
         hass: this._hass,
-        entities: deriveAllDeviceEntities(this._config),
+        entities: resolveDeviceEntities(this._hass, this._config),
         title,
       });
 
@@ -2093,7 +2148,7 @@ class HatchRestFavoritesCard extends HTMLElement {
     const openDialog = () =>
       openHatchDialog({
         hass: this._hass,
-        entities: deriveAllDeviceEntities(this._config),
+        entities: resolveDeviceEntities(this._hass, this._config),
         title: deriveDeviceTitle(stateObj, "Hatch Rest"),
       });
 
